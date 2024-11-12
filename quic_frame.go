@@ -90,7 +90,7 @@ func ReassembleCRYPTOFrames(frames []QUICFrame) ([]byte, error) {
 	// Reassemble CRYPTO frames
 	var reassembled []byte = make([]byte, 0)
 	for _, frame := range cryptoFrames {
-		if uint64(len(reassembled)) == frame.(*CRYPTO).Offset {
+		if cryptoFrames[0].(*CRYPTO).Offset+uint64(len(reassembled)) == frame.(*CRYPTO).Offset {
 			reassembled = append(reassembled, frame.(*CRYPTO).data...)
 		} else {
 			return nil, fmt.Errorf("failed to reassemble CRYPTO frames")
