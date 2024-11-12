@@ -8,7 +8,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/gaukas/clienthellod/internal/utils"
+	"github.com/refraction-networking/clienthellod/internal/utils"
 )
 
 const DEFAULT_TLSFINGERPRINT_EXPIRY = 5 * time.Second

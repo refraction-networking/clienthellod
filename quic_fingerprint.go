@@ -11,7 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/gaukas/clienthellod/internal/utils"
+	"github.com/refraction-networking/clienthellod/internal/utils"
 )
 
 // QUICFingerprint can be used to generate a fingerprint of a QUIC connection.

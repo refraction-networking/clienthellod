@@ -11,7 +11,7 @@ import (
 	"github.com/caddyserver/caddy/v2/caddyconfig/caddyfile"
 	"github.com/caddyserver/caddy/v2/caddyconfig/httpcaddyfile"
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
-	"github.com/gaukas/clienthellod/modcaddy/app"
+	"github.com/refraction-networking/clienthellod/modcaddy/app"
 	"go.uber.org/zap"
 )
 

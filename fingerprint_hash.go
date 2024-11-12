@@ -6,7 +6,7 @@ import (
 	"encoding/hex"
 	"hash"
 
-	"github.com/gaukas/clienthellod/internal/utils"
+	"github.com/refraction-networking/clienthellod/internal/utils"
 )
 
 func updateArr(h hash.Hash, arr []byte) {
