@@ -9,7 +9,7 @@ import (
 	"runtime"
 	"sort"
 
-	"github.com/gaukas/clienthellod/internal/utils"
+	"github.com/refraction-networking/clienthellod/internal/utils"
 	tls "github.com/refraction-networking/utls"
 	"github.com/refraction-networking/utls/dicttls"
 	"golang.org/x/crypto/cryptobyte"

@@ -6,7 +6,7 @@ test_patterns = ["**/*_test.go"]
 name = "go"
 
   [analyzers.meta]
-  import_root = "github.com/gaukas/clienthellod"
+  import_root = "github.com/refraction-networking/clienthellod"
 
 [[transformers]]
 name = "gofumpt"

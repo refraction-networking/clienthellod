@@ -1,18 +1,19 @@
 # `clienthellod`: TLS ClientHello/QUIC Initial Packet reflection service
-![Go Build Status](https://github.com/gaukas/clienthellod/actions/workflows/go.yml/badge.svg)
-[![Go Report Card](https://goreportcard.com/badge/github.com/gaukas/clienthellod)](https://goreportcard.com/report/github.com/gaukas/clienthellod)
+
+![Go Build Status](https://github.com/refraction-networking/clienthellod/actions/workflows/go.yml/badge.svg)
+[![Go Report Card](https://goreportcard.com/badge/github.com/refraction-networking/clienthellod)](https://goreportcard.com/report/github.com/refraction-networking/clienthellod)
 [![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2Fgaukas%2Fclienthellod.svg?type=shield&issueType=license)](https://app.fossa.com/projects/git%2Bgithub.com%2Fgaukas%2Fclienthellod?ref=badge_shield&issueType=license)
 [![Go Doc](https://pkg.go.dev/badge/github.com/refraction-networking/water.svg)](https://pkg.go.dev/github.com/refraction-networking/water)
 
-`clienthellod`, read as "client-hello-D", is a TLS ClientHello/QUIC Initial Packet reflection service. It can be used to parses TLS ClientHello messages and QUIC Initial Packets into human-readable and highly programmable formats such as JSON. 
+`clienthellod`, read as "client-hello-D", is a TLS ClientHello/QUIC Initial Packet reflection service. It can be used to parses TLS ClientHello messages and QUIC Initial Packets into human-readable and highly programmable formats such as JSON.
 
-Is is a part of the TLS fingerprintability research project which spans [tlsfingerprint.io](https://tlsfingerprint.io) and [quic.tlsfingerprint.io](https://quic.tlsfingerprint.io). It parses the ClientHello messages sent by TLS clients and QUIC Client Initial Packets sent by QUIC clients and display the parsed information in a human-readable format with high programmability. 
+Is is a part of the TLS fingerprintability research project which spans [tlsfingerprint.io](https://tlsfingerprint.io) and [quic.tlsfingerprint.io](https://quic.tlsfingerprint.io). It parses the ClientHello messages sent by TLS clients and QUIC Client Initial Packets sent by QUIC clients and display the parsed information in a human-readable format with high programmability.
 
 See [tlsfingerprint.io](https://tlsfingerprint.io) and [quic.tlsfingerprint.io](https://quic.tlsfingerprint.io) for more details about the project.
 
 ## Quick Start
 
-`clienthellod` comes as a Go library, which can be used to parse both TLS and QUIC protocols. 
+`clienthellod` comes as a Go library, which can be used to parse both TLS and QUIC protocols.
 
 ### TLS/QUIC Fingerprinter
 
@@ -65,7 +66,7 @@ See [tlsfingerprint.io](https://tlsfingerprint.io) and [quic.tlsfingerprint.io](
     if err != nil {
         panic(err)
     }
-    
+
     // err := ch.ParseClientHello() // no need to call again, UnmarshalClientHello automatically calls ParseClientHello
 ```
 
@@ -85,7 +86,7 @@ See [tlsfingerprint.io](https://tlsfingerprint.io) and [quic.tlsfingerprint.io](
 
     ci, err := clienthellod.UnmarshalQUICClientInitialPacket(buf[:n]) // decodes QUIC Client Initial Packet
     if err != nil {
-        panic(err)    
+        panic(err)
     }
 
     jsonB, err = json.MarshalIndent(cip, "", "  ")
@@ -102,7 +103,7 @@ Implementations including Chrome/Chromium sends oversized Client Hello which doe
 
 ```go
     gci := GatherClientInitials() // Each GatherClientInitials reassembles one QUIC Client Initial Packets stream. Use a QUIC Fingerprinter for multiple potential senders, which automatically demultiplexes the packets based on the source address.
-    
+
     udpConn, err := net.ListenUDP("udp", ":443")
     defer udpConn.Close()
 
@@ -119,7 +120,7 @@ Implementations including Chrome/Chromium sends oversized Client Hello which doe
 
         ci, err := clienthellod.UnmarshalQUICClientInitialPacket(buf[:n]) // decodes QUIC Client Initial Packet
         if err != nil {
-            panic(err)    
+            panic(err)
         }
 
         err = gci.AddPacket(ci)
@@ -131,10 +132,10 @@ Implementations including Chrome/Chromium sends oversized Client Hello which doe
 
 ### Use with Caddy
 
-We also provide clienthellod as a Caddy Module in `modcaddy`, which you can use with Caddy to capture ClientHello messages and QUIC Client Initial Packets. See [modcaddy](https://github.com/gaukas/clienthellod/tree/master/modcaddy) for more details.
+We also provide clienthellod as a Caddy Module in `modcaddy`, which you can use with Caddy to capture ClientHello messages and QUIC Client Initial Packets. See [modcaddy](https://github.com/refraction-networking/clienthellod/tree/master/modcaddy) for more details.
 
 ## License
 
-This project is developed and distributed under Apache-2.0 license. 
+This project is developed and distributed under Apache-2.0 license.
 
 [![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2Fgaukas%2Fclienthellod.svg?type=large&issueType=license)](https://app.fossa.com/projects/git%2Bgithub.com%2Fgaukas%2Fclienthellod?ref=badge_large&issueType=license)

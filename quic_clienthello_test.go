@@ -6,7 +6,7 @@ import (
 
 	"golang.org/x/exp/slices"
 
-	. "github.com/gaukas/clienthellod"
+	. "github.com/refraction-networking/clienthellod"
 )
 
 func TestParseQUICClientHello(t *testing.T) {

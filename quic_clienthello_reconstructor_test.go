@@ -12,7 +12,7 @@ import (
 
 	crand "crypto/rand"
 
-	. "github.com/gaukas/clienthellod"
+	. "github.com/refraction-networking/clienthellod"
 )
 
 var (

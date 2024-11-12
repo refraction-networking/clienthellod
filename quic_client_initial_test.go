@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	. "github.com/gaukas/clienthellod"
+	. "github.com/refraction-networking/clienthellod"
 )
 
 var mapGatheredClientInitials = map[string][][]byte{

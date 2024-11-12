@@ -1,4 +1,4 @@
-module github.com/gaukas/clienthellod
+module github.com/refraction-networking/clienthellod
 
 go 1.21.0
 
