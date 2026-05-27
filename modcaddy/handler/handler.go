@@ -93,11 +93,8 @@ func (h *Handler) ServeHTTP(wr http.ResponseWriter, req *http.Request, next cadd
 // serveTLS handles HTTP/1.0, HTTP/1.1, H2 requests by looking up the
 // ClientHello from the reservoir and writing it to the response.
 func (h *Handler) serveTLS(wr http.ResponseWriter, req *http.Request, next caddyhttp.Handler) error { // skipcq: GO-W1029
-	// Moved to the top to prevent web broswers caching QUIC after an tls fetching error
-	wr.Header().Set("Alt-Svc", "clear") // to prevent web broswers switching to QUIC
-
 	// get the client hello from the reservoir
-	ch := h.reservoir.TLSFingerprinter().Pop(req.RemoteAddr)
+	ch := h.reservoir.TLSFingerprinter().Peek(req.RemoteAddr)
 	if ch == nil {
 		h.logger.Debug(fmt.Sprintf("Unable to fetch TLS ClientHello sent by %s, maybe not TLS connection?", req.RemoteAddr))
 		return next.ServeHTTP(wr, req)
