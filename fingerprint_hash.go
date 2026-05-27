@@ -40,13 +40,51 @@ func (id FingerprintID) AsHex() string {
 	return hex.EncodeToString(hid)
 }
 
+// isGREASEU16 returns true if v is a GREASE value (0xXAXA pattern).
+func isGREASEU16(v uint16) bool {
+	high := (v >> 8) & 0xFF
+	low := v & 0xFF
+	return high == low && (low&0x0F) == 0x0A
+}
+
+// ungreaseU16 replaces a GREASE u16 value with the canonical 0x0A0A placeholder.
+func ungreaseU16(v uint16) uint16 {
+	if isGREASEU16(v) {
+		return 0x0A0A
+	}
+	return v
+}
+
+// pskGREASE is the set of PSK exchange mode GREASE byte values (RFC 8701).
+var pskGREASE = [8]byte{0x0B, 0x2A, 0x49, 0x68, 0x87, 0xA6, 0xC5, 0xE4}
+
+// ungreasePSK replaces a PSK exchange mode GREASE byte with 0x0B.
+func ungreasePSK(v byte) byte {
+	for _, g := range pskGREASE {
+		if v == g {
+			return 0x0B
+		}
+	}
+	return v
+}
+
+// isGREASEALPN returns true if a 2-char ALPN string is a GREASE value.
+func isGREASEALPN(s string) bool {
+	if len(s) != 2 {
+		return false
+	}
+	return s[0] == s[1] && (s[0]&0x0F) == 0x0A
+}
+
 // calcNumericID computes both the original and normalized TLS fingerprint IDs.
 //
 // Algorithm matches retina_quic_fp's TlsFingerprint::fingerprint():
-//   - SHA-1 over: version(u32), cipher_suites, compression_algs, extensions(sorted),
-//     named_groups, ec_point_formats, signature_algs, alpn(per-string u8-length-prefixed),
-//     key_share(group IDs only), psk_exchange_modes, supported_versions,
-//     compress_certificate, record_size_limit(always 2 bytes)
+//   - SHA-1 over: version(u32), cipher_suites(ungreased), compression_algs,
+//     extensions(ungreased, sorted if normalized), named_groups(ungreased),
+//     ec_point_formats, signature_algs(ungreased), alpn(per-string u8-length-prefixed,
+//     GREASE→"\x0a\x0a"), key_share(ungreased group IDs), psk_exchange_modes(ungreased),
+//     supported_versions(ungreased), compress_certificate(raw wire bytes),
+//     record_size_limit(always 2 bytes)
 //   - No array-level length prefixes anywhere.
 func (ch *ClientHello) calcNumericID() (orig, norm int64) {
 	for _, normalized := range []bool{false, true} {
@@ -55,58 +93,67 @@ func (ch *ClientHello) calcNumericID() (orig, norm int64) {
 		// TLS handshake version as u32 (record version excluded)
 		binary.Write(h, binary.BigEndian, uint32(ch.TLSHandshakeVersion))
 
-		// Cipher suites — flat big-endian u16 bytes
+		// Cipher suites — ungreased, flat big-endian u16 bytes
 		for _, cs := range ch.CipherSuites {
-			binary.Write(h, binary.BigEndian, cs)
+			binary.Write(h, binary.BigEndian, ungreaseU16(cs))
 		}
 
 		// Compression methods — flat bytes
 		h.Write(ch.CompressionMethods)
 
-		// Extensions — sorted if normalized, flat big-endian u16 bytes
+		// Extensions — ungreased (already handled by clienthellod), sorted if normalized
 		exts := ch.Extensions
 		if normalized {
 			exts = ch.ExtensionsNormalized
 		}
 		for _, ext := range exts {
-			binary.Write(h, binary.BigEndian, ext)
+			binary.Write(h, binary.BigEndian, ungreaseU16(ext))
 		}
 
-		// Named groups — flat big-endian u16 bytes
+		// Named groups — ungreased, flat big-endian u16 bytes
 		for _, ng := range ch.NamedGroupList {
-			binary.Write(h, binary.BigEndian, ng)
+			binary.Write(h, binary.BigEndian, ungreaseU16(ng))
 		}
 
 		// EC point formats — flat bytes
 		h.Write(ch.ECPointFormatList)
 
-		// Signature algorithms — flat big-endian u16 bytes
+		// Signature algorithms — ungreased, flat big-endian u16 bytes
 		for _, sa := range ch.SignatureSchemeList {
-			binary.Write(h, binary.BigEndian, sa)
+			binary.Write(h, binary.BigEndian, ungreaseU16(sa))
 		}
 
-		// ALPN — per-string u8 length prefix + string bytes, no array prefix
+		// ALPN — per-string u8 length prefix + bytes; GREASE strings → "\x0a\x0a"
 		for _, proto := range ch.ALPN {
+			if isGREASEALPN(proto) {
+				proto = "\x0a\x0a"
+			}
 			h.Write([]byte{uint8(len(proto))})
 			h.Write([]byte(proto))
 		}
 
-		// Key share — group IDs only, flat big-endian u16 bytes
+		// Key share — ungreased (already handled by clienthellod), flat big-endian u16
 		for _, ks := range ch.KeyShare {
-			binary.Write(h, binary.BigEndian, ks)
+			binary.Write(h, binary.BigEndian, ungreaseU16(ks))
 		}
 
-		// PSK exchange modes — flat bytes
-		h.Write(ch.PSKKeyExchangeModes)
+		// PSK exchange modes — ungreased, flat bytes
+		for _, mode := range ch.PSKKeyExchangeModes {
+			h.Write([]byte{ungreasePSK(mode)})
+		}
 
-		// Supported versions — flat big-endian u16 bytes
+		// Supported versions — ungreased, flat big-endian u16 bytes
 		for _, sv := range ch.SupportedVersions {
-			binary.Write(h, binary.BigEndian, sv)
+			binary.Write(h, binary.BigEndian, ungreaseU16(sv))
 		}
 
-		// Compress certificate — each algorithm as u8 (low byte)
-		for _, algo := range ch.CertCompressAlgo {
-			h.Write([]byte{uint8(algo)})
+		// Compress certificate — raw wire bytes: 2-byte list length + 2 bytes per algo.
+		// Matches what the Retina tls-parser stores (the full extension value field).
+		if len(ch.CertCompressAlgo) > 0 {
+			binary.Write(h, binary.BigEndian, uint16(2*len(ch.CertCompressAlgo)))
+			for _, algo := range ch.CertCompressAlgo {
+				binary.Write(h, binary.BigEndian, algo)
+			}
 		}
 
 		// Record size limit — always exactly 2 bytes (value or [0, 0])
