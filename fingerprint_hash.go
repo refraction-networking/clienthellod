@@ -147,10 +147,10 @@ func (ch *ClientHello) calcNumericID() (orig, norm int64) {
 			binary.Write(h, binary.BigEndian, ungreaseU16(sv))
 		}
 
-		// Compress certificate — raw wire bytes: 2-byte list length + 2 bytes per algo.
-		// Matches what the Retina tls-parser stores (the full extension value field).
+		// Compress certificate — 1-byte list-byte-count + 2 bytes per algo.
+		// DB stores e.g. [2, 0, 2] for brotli: count=2 (byte length), then 0x0002.
 		if len(ch.CertCompressAlgo) > 0 {
-			binary.Write(h, binary.BigEndian, uint16(2*len(ch.CertCompressAlgo)))
+			h.Write([]byte{uint8(2 * len(ch.CertCompressAlgo))})
 			for _, algo := range ch.CertCompressAlgo {
 				binary.Write(h, binary.BigEndian, algo)
 			}
