@@ -76,15 +76,13 @@ func (h *Handler) Provision(ctx caddy.Context) error { // skipcq: GO-W1029
 func (h *Handler) ServeHTTP(wr http.ResponseWriter, req *http.Request, next caddyhttp.Handler) error { // skipcq: GO-W1029
 	h.logger.Debug("Serving HTTP to " + req.RemoteAddr + " on Protocol " + req.Proto)
 
-	if h.TLS && req.ProtoMajor <= 2 { // When TLS is enabled and for HTTP/1.0 or HTTP/1.1 or H2 served over TLS
-		return h.serveTLS(wr, req, next)
-	} else if h.QUIC { // When QUIC is enabled
-		// if req.ProtoMajor == 3 { // QUIC
-		// 	return h.serveQUIC(wr, req, next)
-		// } else {
-		// 	h.logger.Debug("Serving QUIC Fingerprint over TLS")
-		// 	return h.serveQUICFingerprintOverTLS(wr, req, next)
-		// }
+	if h.TLS {
+		if req.ProtoMajor <= 2 {
+			return h.serveTLS(wr, req, next)
+		}
+		// H3: extract TLS ClientHello from QUIC reservoir (it's embedded in QUIC Initial packets)
+		return h.serveTLSOverH3(wr, req, next)
+	} else if h.QUIC {
 		return h.serveQUIC(wr, req, next)
 	}
 	return next.ServeHTTP(wr, req)
@@ -135,6 +133,48 @@ func (h *Handler) serveTLS(wr http.ResponseWriter, req *http.Request, next caddy
 	return nil
 }
 
+// serveTLSOverH3 handles HTTP/3 requests for the TLS handler by extracting the
+// TLS ClientHello that clienthellod captured from the QUIC Initial packets.
+func (h *Handler) serveTLSOverH3(wr http.ResponseWriter, req *http.Request, next caddyhttp.Handler) error { // skipcq: GO-W1029
+	from := req.RemoteAddr
+	qfp, err := h.reservoir.QUICFingerprinter().PeekAwait(from)
+	if err != nil {
+		// Fallback: look up the most recent QUIC session for this IP (handles connection reuse/migration)
+		ip, _, splitErr := net.SplitHostPort(req.RemoteAddr)
+		if splitErr == nil {
+			if lastFrom, ok := h.reservoir.GetLastQUICVisitor(ip); ok {
+				qfp, err = h.reservoir.QUICFingerprinter().PeekAwait(lastFrom)
+			}
+		}
+		if err != nil || qfp == nil {
+			h.logger.Debug(fmt.Sprintf("Unable to fetch QUIC data for TLS-over-H3 from %s", req.RemoteAddr))
+			return next.ServeHTTP(wr, req)
+		}
+	}
+	if qfp.ClientInitials == nil || qfp.ClientInitials.ClientHello == nil {
+		return next.ServeHTTP(wr, req)
+	}
+	ch := &qfp.ClientInitials.ClientHello.ClientHello
+	ch.UserAgent = req.UserAgent()
+
+	var b []byte
+	if req.URL.Query().Get("beautify") == "true" {
+		b, err = json.MarshalIndent(ch, "", "  ")
+	} else {
+		b, err = json.Marshal(ch)
+	}
+	if err != nil {
+		h.logger.Error("failed to marshal TLS-over-H3 ClientHello into JSON", zap.Error(err))
+		return next.ServeHTTP(wr, req)
+	}
+	wr.Header().Set("Content-Type", "application/json")
+	_, err = wr.Write(b)
+	if err != nil {
+		h.logger.Error("failed to write response", zap.Error(err))
+	}
+	return nil
+}
+
 // serveQUIC handles QUIC requests by looking up the ClientHello from the
 // reservoir and writing it to the response.
 func (h *Handler) serveQUIC(wr http.ResponseWriter, req *http.Request, next caddyhttp.Handler) error { // skipcq: GO-W1029
@@ -163,6 +203,15 @@ func (h *Handler) serveQUIC(wr http.ResponseWriter, req *http.Request, next cadd
 
 	// get the client hello from the reservoir
 	qfp, err := h.reservoir.QUICFingerprinter().PeekAwait(from)
+	if err != nil && req.ProtoMajor == 3 {
+		// H3 direct lookup failed — try visitor fallback (handles port migration)
+		ip, _, splitErr := net.SplitHostPort(req.RemoteAddr)
+		if splitErr == nil {
+			if lastFrom, ok := h.reservoir.GetLastQUICVisitor(ip); ok {
+				qfp, err = h.reservoir.QUICFingerprinter().PeekAwait(lastFrom)
+			}
+		}
+	}
 	if err != nil {
 		h.logger.Debug(fmt.Sprintf("Unable to fetch QUIC fingerprint sent by %s: %v", req.RemoteAddr, err))
 		return next.ServeHTTP(wr, req)
