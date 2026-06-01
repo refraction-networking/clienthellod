@@ -137,16 +137,18 @@ func (h *Handler) serveTLS(wr http.ResponseWriter, req *http.Request, next caddy
 // TLS ClientHello that clienthellod captured from the QUIC Initial packets.
 func (h *Handler) serveTLSOverH3(wr http.ResponseWriter, req *http.Request, next caddyhttp.Handler) error { // skipcq: GO-W1029
 	from := req.RemoteAddr
-	qfp, err := h.reservoir.QUICFingerprinter().PeekAwait(from)
-	if err != nil {
+	// Use Peek (non-blocking) instead of PeekAwait. PeekAwait blocks for up to
+	// quic_ttl on entries still being gathered, which stalls goroutines indefinitely.
+	qfp := h.reservoir.QUICFingerprinter().Peek(from)
+	if qfp == nil {
 		// Fallback: look up the most recent QUIC session for this IP (handles connection reuse/migration)
 		ip, _, splitErr := net.SplitHostPort(req.RemoteAddr)
 		if splitErr == nil {
 			if lastFrom, ok := h.reservoir.GetLastQUICVisitor(ip); ok {
-				qfp, err = h.reservoir.QUICFingerprinter().PeekAwait(lastFrom)
+				qfp = h.reservoir.QUICFingerprinter().Peek(lastFrom)
 			}
 		}
-		if err != nil || qfp == nil {
+		if qfp == nil {
 			h.logger.Debug(fmt.Sprintf("Unable to fetch QUIC data for TLS-over-H3 from %s", req.RemoteAddr))
 			return next.ServeHTTP(wr, req)
 		}
@@ -158,6 +160,7 @@ func (h *Handler) serveTLSOverH3(wr http.ResponseWriter, req *http.Request, next
 	ch.UserAgent = req.UserAgent()
 
 	var b []byte
+	var err error
 	if req.URL.Query().Get("beautify") == "true" {
 		b, err = json.MarshalIndent(ch, "", "  ")
 	} else {
@@ -201,19 +204,19 @@ func (h *Handler) serveQUIC(wr http.ResponseWriter, req *http.Request, next cadd
 		h.logger.Debug(fmt.Sprintf("Fetching most recent QUIC Fingerprint sent by %s for TLS client at %s", from, req.RemoteAddr))
 	}
 
-	// get the client hello from the reservoir
-	qfp, err := h.reservoir.QUICFingerprinter().PeekAwait(from)
-	if err != nil && req.ProtoMajor == 3 {
+	// get the client hello from the reservoir (non-blocking Peek to avoid goroutine stalls)
+	qfp := h.reservoir.QUICFingerprinter().Peek(from)
+	if qfp == nil && req.ProtoMajor == 3 {
 		// H3 direct lookup failed — try visitor fallback (handles port migration)
 		ip, _, splitErr := net.SplitHostPort(req.RemoteAddr)
 		if splitErr == nil {
 			if lastFrom, ok := h.reservoir.GetLastQUICVisitor(ip); ok {
-				qfp, err = h.reservoir.QUICFingerprinter().PeekAwait(lastFrom)
+				qfp = h.reservoir.QUICFingerprinter().Peek(lastFrom)
 			}
 		}
 	}
-	if err != nil {
-		h.logger.Debug(fmt.Sprintf("Unable to fetch QUIC fingerprint sent by %s: %v", req.RemoteAddr, err))
+	if qfp == nil {
+		h.logger.Debug(fmt.Sprintf("Unable to fetch QUIC fingerprint sent by %s", req.RemoteAddr))
 		return next.ServeHTTP(wr, req)
 	}
 
@@ -224,11 +227,11 @@ func (h *Handler) serveQUIC(wr http.ResponseWriter, req *http.Request, next cadd
 	// fetched for even HTTP-over-TLS (TCP-based) requests.
 	if req.ProtoMajor == 3 {
 		// Get IP part of the RemoteAddr
-		ip, _, err := net.SplitHostPort(req.RemoteAddr)
-		if err == nil {
+		ip, _, ipErr := net.SplitHostPort(req.RemoteAddr)
+		if ipErr == nil {
 			h.reservoir.NewQUICVisitor(ip, req.RemoteAddr)
 		} else {
-			h.logger.Error(fmt.Sprintf("Can't extract IP from %s: %v", req.RemoteAddr, err))
+			h.logger.Error(fmt.Sprintf("Can't extract IP from %s: %v", req.RemoteAddr, ipErr))
 		}
 	}
 
@@ -236,6 +239,7 @@ func (h *Handler) serveQUIC(wr http.ResponseWriter, req *http.Request, next cadd
 
 	// dump JSON
 	var b []byte
+	var err error
 	if req.URL.Query().Get("beautify") == "true" {
 		b, err = json.MarshalIndent(qfp, "", "  ")
 	} else {
