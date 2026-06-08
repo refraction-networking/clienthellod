@@ -43,11 +43,17 @@ func (ListenerWrapper) CaddyModule() caddy.ModuleInfo { // skipcq: GO-W1029
 }
 
 func (lw *ListenerWrapper) Cleanup() error { // skipcq: GO-W1029
-	if lw.UDP && lw.udpListener != nil {
-		return lw.udpListener.Close()
-	}
-	if lw.UDP && lw.udp6Listener != nil {
-		return lw.udp6Listener.Close()
+	if lw.UDP {
+		if lw.udpListener != nil {
+			if err := lw.udpListener.Close(); err != nil {
+				return err
+			}
+		}
+		if lw.udp6Listener != nil {
+			if err := lw.udp6Listener.Close(); err != nil {
+				return err
+			}
+		}
 	}
 	return nil
 }
@@ -118,27 +124,21 @@ func wrapTlsListener(in net.Listener, r *app.Reservoir, logger *zap.Logger) net.
 }
 
 func (l *tlsListener) Accept() (net.Conn, error) {
-	conn, err := l.Listener.Accept()
-	if err != nil {
-		return conn, err
+	for {
+		conn, err := l.Listener.Accept()
+		if err != nil {
+			return nil, err
+		}
+
+		rewindConn, err := l.reservoir.TLSFingerprinter().HandleTCPConn(conn)
+		if err != nil {
+			l.logger.Error("internal error: TLSFingerprinter failed to handle TCP connection, closing connection", zap.Error(err))
+			conn.Close()
+			continue
+		}
+
+		return rewindConn, nil
 	}
-
-	// ch, err := clienthellod.ReadClientHello(conn)
-	// if err == nil {
-	// 	l.reservoir.DepositClientHello(conn.RemoteAddr().String(), ch)
-	// 	l.logger.Debug("Deposited ClientHello from " + conn.RemoteAddr().String())
-	// } else {
-	// 	l.logger.Error("Failed to read ClientHello from "+conn.RemoteAddr().String(), zap.Error(err))
-	// }
-
-	rewindConn, err := l.reservoir.TLSFingerprinter().HandleTCPConn(conn)
-	if err != nil {
-		l.logger.Error("internal error: TLSFingerprinter failed to handle TCP connection", zap.Error(err))
-		return conn, err
-	}
-
-	// No matter what happens, rewind the connection
-	return rewindConn, nil
 }
 
 func (lw *ListenerWrapper) UnmarshalCaddyfile(d *caddyfile.Dispenser) error { // skipcq: GO-W1029
