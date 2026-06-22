@@ -26,10 +26,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Check out the pinned conformance corpus (skip LFS sample blobs)
-        # The corpus pcaps are plain git; only samples/ is LFS, which the harness
-        # does not need. GIT_LFS_SKIP_SMUDGE keeps the checkout to the small corpus.
-        run: GIT_LFS_SKIP_SMUDGE=1 git submodule update --init testdata/conformance
+      - name: Check out the pinned conformance corpus
+        run: git submodule update --init testdata/conformance
       - uses: actions/setup-go@v5
         with:
           go-version: stable
