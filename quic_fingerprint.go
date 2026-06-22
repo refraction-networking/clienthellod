@@ -91,8 +91,9 @@ func (qfp *QUICFingerprinter) HandlePacket(from string, p []byte) error {
 
 	ci, err := UnmarshalQUICClientInitialPacket(p)
 	if err != nil {
-		if errors.Is(err, ErrNotQUICLongHeaderFormat) || errors.Is(err, ErrNotQUICInitialPacket) {
-			return nil // totally fine, we don't care about non QUIC initials
+		if errors.Is(err, ErrNotQUICLongHeaderFormat) || errors.Is(err, ErrNotQUICInitialPacket) ||
+			errors.Is(err, ErrUnsupportedQUICVersion) {
+			return nil // totally fine, we don't care about non-QUIC-v1 initials
 		}
 		return err
 	}

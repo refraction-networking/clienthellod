@@ -2,12 +2,18 @@ package clienthellod
 
 import (
 	"bytes"
+	"encoding/binary"
 	"errors"
 	"io"
 
 	"github.com/refraction-networking/clienthellod/internal/utils"
 	"golang.org/x/crypto/cryptobyte"
 )
+
+// QUICVersion1 is the QUIC v1 version number (RFC 9000). It is the only version
+// clienthellod can decrypt: ClientInitialKeysCalc derives Initial keys with the
+// v1 salt (RFC 9001).
+const QUICVersion1 uint32 = 0x00000001
 
 // ReadNextVLI unpacks the next variable-length integer from the given
 // io.Reader. It returns the decoded value and the number of bytes read.
@@ -83,6 +89,7 @@ func IsGREASETransportParameter(paramType uint64) bool {
 var (
 	ErrNotQUICLongHeaderFormat = errors.New("not a QUIC Long Header Format Packet")
 	ErrNotQUICInitialPacket    = errors.New("not a QUIC Initial Packet")
+	ErrUnsupportedQUICVersion  = errors.New("unsupported QUIC version (only v1 is supported)")
 )
 
 // DecodeQUICHeaderAndFrames decodes a QUIC initial packet and returns a QUICHeader.
@@ -115,6 +122,18 @@ func DecodeQUICHeaderAndFrames(p []byte) (hdr *QUICHeader, frames QUICFrames, er
 
 	hdr.Version = make(utils.Uint8Arr, 4)
 	copy(hdr.Version, p[1:5])
+
+	// Only QUIC v1 is supported (ClientInitialKeysCalc uses the v1 salt). Reject
+	// any other version BEFORE deriving keys. This matters for GREASE-version
+	// probes: quiche sends an Initial with a reserved version (e.g. 0xbabababa)
+	// reusing the real connection's DCID. Decrypting it with v1 keys yields
+	// garbage CRYPTO that, grouped under the same DCID, collides with the real
+	// v1 Initial and breaks ClientHello reconstruction — so no fingerprint is
+	// produced at all. Skipping it here lets the real Initial be fingerprinted.
+	if binary.BigEndian.Uint32(hdr.Version) != QUICVersion1 {
+		return nil, nil, ErrUnsupportedQUICVersion
+	}
+
 	s := cryptobyte.String(p[5:])
 	initialRandom := new(cryptobyte.String)
 	if !s.ReadUint8LengthPrefixed(initialRandom) {

@@ -1,0 +1,3 @@
+[submodule "testdata/conformance"]
+	path = testdata/conformance
+	url = https://github.com/refraction-networking/quic-fingerprint-conformance

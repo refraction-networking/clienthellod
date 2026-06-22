@@ -1,0 +1,45 @@
+# Self-test against the shared QUIC/TLS fingerprint conformance contract.
+#
+# testdata/conformance is a submodule pinned to a specific commit of
+# refraction-networking/quic-fingerprint-conformance; that pinned commit IS the
+# contract version this repo conforms to. The harness builds the conformance
+# go_runner against THIS checkout of clienthellod (via a generated go.work) and
+# checks its output for every corpus case against the committed goldens.
+#
+# To adopt a new contract version, bump the submodule (a deliberate, reviewed
+# change):  git -C testdata/conformance fetch && git -C testdata/conformance
+# checkout <sha> && git add testdata/conformance && git commit
+name: conformance
+
+on:
+  push:
+    branches: ["master"]
+  pull_request:
+    branches: ["master"]
+
+permissions:
+  contents: read
+
+jobs:
+  corpus:
+    name: clienthellod vs conformance corpus
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check out the pinned conformance corpus (skip LFS sample blobs)
+        # The corpus pcaps are plain git; only samples/ is LFS, which the harness
+        # does not need. GIT_LFS_SKIP_SMUDGE keeps the checkout to the small corpus.
+        run: GIT_LFS_SKIP_SMUDGE=1 git submodule update --init testdata/conformance
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: harness.check --impl go
+        working-directory: testdata/conformance
+        env:
+          # The GoRunner builds the go_runner against this clienthellod checkout
+          # via a generated go.work (the committed go.mod pin is left untouched).
+          QUICFP_CLIENTHELLOD: ${{ github.workspace }}
+        run: python -m harness.check --impl go -v

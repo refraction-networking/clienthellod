@@ -56,8 +56,8 @@ var (
 			0xff73db, // dicttls.QUICTransportParameter_version_information,
 		},
 
-		HexID: "89bffb37428ff651",
-		NumID: 9925928318506366545,
+		HexID: "99ba8100cb63d949",
+		NumID: 11077308073883457865,
 	}
 )
 

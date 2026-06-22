@@ -16,6 +16,11 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
+    - name: Check out the conformance corpus (enables TestConformanceCorpus)
+      # Pinned submodule; skip the LFS sample blobs (only the small corpus is
+      # needed). Without this, TestConformanceCorpus skips itself.
+      run: GIT_LFS_SKIP_SMUDGE=1 git submodule update --init testdata/conformance
+
     - name: Set up Go
       uses: actions/setup-go@v5
       with:
