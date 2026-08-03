@@ -48,8 +48,10 @@ func UnmarshalQUICClientInitialPacket(p []byte) (ci *ClientInitial, err error) {
 // the QUIC handshake.
 type GatheredClientInitials struct {
 	Packets         []*ClientInitial `json:"packets,omitempty"` // sorted by ClientInitial.PacketNumber
-	maxPacketNumber uint64           // if incomingPacketNumber > maxPacketNumber, will reject the packet
+	maxPacketNumber uint64           // if a packet lies more than this many packet numbers from pnBase, will reject the packet
 	maxPacketCount  uint64           // if len(Packets) >= maxPacketCount, will reject any new packets
+	pnBase          uint64           // packet number of the first Initial seen; anchors maxPacketNumber
+	pnBaseSet       bool             // whether pnBase has been recorded yet
 	pktsMutex       *sync.Mutex
 
 	clientHelloReconstructor *QUICClientHelloReconstructor
@@ -66,6 +68,16 @@ type GatheredClientInitials struct {
 }
 
 const (
+	// DEFAULT_MAX_INITIAL_PACKET_NUMBER bounds how far into a connection Client
+	// Initials are still gathered. It is measured as a distance from the first
+	// Initial observed for the connection, NOT as an absolute packet number:
+	// clients are free to start numbering anywhere, and Firefox does -- across a
+	// 60-connection sample its first Initial packet number was roughly uniform
+	// over 1..32 (median 18) with a tail past 240. Comparing the raw packet
+	// number against this dropped such connections entirely, and since Firefox's
+	// ClientHello spans two Initials (n and n+1) it also dropped connections
+	// starting at exactly the bound: the second packet was rejected and the
+	// ClientHello never reassembled.
 	DEFAULT_MAX_INITIAL_PACKET_NUMBER uint64 = 32
 	DEFAULT_MAX_INITIAL_PACKET_COUNT  uint64 = 4
 )
@@ -126,8 +138,16 @@ func (gci *GatheredClientInitials) AddPacket(cip *ClientInitial) error {
 		return nil
 	}
 
+	// Anchor the packet-number bound on this connection's first Initial. See
+	// DEFAULT_MAX_INITIAL_PACKET_NUMBER: the bound is a distance, not a ceiling,
+	// so it does not assume the client started numbering at zero.
+	if !gci.pnBaseSet {
+		gci.pnBase = cip.Header.initialPacketNumber
+		gci.pnBaseSet = true
+	}
+
 	// check if packet needs to be rejected based upon set maxPacketNumber and maxPacketCount
-	if cip.Header.initialPacketNumber > atomic.LoadUint64(&gci.maxPacketNumber) ||
+	if pnDistance(cip.Header.initialPacketNumber, gci.pnBase) > atomic.LoadUint64(&gci.maxPacketNumber) ||
 		uint64(len(gci.Packets)) >= atomic.LoadUint64(&gci.maxPacketCount) {
 		return ErrPacketRejected
 	}
@@ -197,12 +217,26 @@ func (gci *GatheredClientInitials) SetDeadline(deadline time.Time) {
 	gci.deadline = deadline
 }
 
-// SetMaxPacketNumber sets the maximum packet number to be gathered.
-// If a Client Initial packet with a higher packet number is received, it will be rejected.
+// SetMaxPacketNumber sets how far, in packet numbers, a Client Initial may lie
+// from the first Initial observed for this connection and still be gathered.
+// Packets beyond that distance are rejected.
+//
+// It is a distance rather than an absolute ceiling because clients may start
+// numbering their Initials anywhere; see DEFAULT_MAX_INITIAL_PACKET_NUMBER.
 //
 // This function can be used as a precaution against memory exhaustion attacks.
 func (gci *GatheredClientInitials) SetMaxPacketNumber(maxPacketNumber uint64) {
 	atomic.StoreUint64(&gci.maxPacketNumber, maxPacketNumber)
+}
+
+// pnDistance returns the absolute difference between two packet numbers, so a
+// reordered capture -- where a lower packet number arrives second -- is not
+// penalised by the span guard.
+func pnDistance(a, b uint64) uint64 {
+	if a > b {
+		return a - b
+	}
+	return b - a
 }
 
 // SetMaxPacketCount sets the maximum number of packets to be gathered.
