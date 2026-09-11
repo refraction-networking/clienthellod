@@ -154,7 +154,14 @@ func DecodeQUICHeaderAndFrames(p []byte) (hdr *QUICHeader, frames QUICFrames, er
 	if err != nil {
 		return nil, nil, err
 	}
-	// read token bytes
+	// read token bytes. A token can never be longer than the bytes remaining in
+	// the datagram; bounding tokenLen before make() stops a crafted or garbage
+	// length VLI from triggering a "makeslice: len out of range" panic. This
+	// parser runs on the QUIC listener's raw-socket goroutine, so that panic
+	// crashed the whole Caddy process (see quic_malformed_test.go).
+	if tokenLen > uint64(r.Len()) {
+		return nil, nil, errors.New("token length exceeds remaining packet bytes")
+	}
 	token := make([]byte, tokenLen)
 	n, err := r.Read(token)
 	if err != nil {
@@ -176,7 +183,12 @@ func DecodeQUICHeaderAndFrames(p []byte) (hdr *QUICHeader, frames QUICFrames, er
 		return nil, nil, errors.New("packet length too short, ignore")
 	}
 
-	// read all remaining bytes as payload
+	// read all remaining bytes as payload. Same guard as the token length above:
+	// the declared payload length must fit within the bytes actually present, or
+	// make() can panic with "len out of range".
+	if packetLen > uint64(r.Len()) {
+		return nil, nil, errors.New("packet length exceeds remaining packet bytes")
+	}
 	payload := make([]byte, packetLen)
 	n, err = r.Read(payload)
 	if err != nil {

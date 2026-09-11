@@ -4,6 +4,7 @@ import (
 	"crypto/sha1" // skipcq: GSC-G505
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"runtime"
@@ -84,7 +85,20 @@ func (qfp *QUICFingerprinter) SetTimeout(timeout time.Duration) {
 }
 
 // HandlePacket handles a QUIC packet.
-func (qfp *QUICFingerprinter) HandlePacket(from string, p []byte) error {
+func (qfp *QUICFingerprinter) HandlePacket(from string, p []byte) (err error) {
+	// Defense in depth: HandlePacket runs on the long-lived raw-socket goroutine
+	// (HandleIPConn). A panic anywhere in the QUIC parser (e.g. a malformed
+	// Initial packet) would otherwise unwind past this goroutine and crash the
+	// entire process. Recover and surface it as an error the caller's loop
+	// already tolerates, keeping the listener alive. The bounds checks in
+	// DecodeQUICHeaderAndFrames fix the known trigger; this is the backstop for
+	// any future one.
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("recovered from panic handling QUIC packet from %s: %v", from, r)
+		}
+	}()
+
 	if qfp.closed.Load() {
 		return errors.New("QUICFingerprinter closed")
 	}
