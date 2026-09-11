@@ -2,6 +2,7 @@ package app
 
 import (
 	"errors"
+	"strings"
 	"sync"
 	"time"
 
@@ -45,6 +46,7 @@ type Reservoir struct {
 	tlsFingerprinter        *clienthellod.TLSFingerprinter
 	quicFingerprinter       *clienthellod.QUICFingerprinter
 	mapLastQUICVisitorPerIP *sync.Map // sometimes even when a complete QUIC handshake is done, client decide to connect using HTTP/2
+	mapLastTLSVisitorPerIP  *sync.Map // last TCP RemoteAddr (IP:port) whose ClientHello was captured, keyed by IP+SNI — scoped fallback for serveTLS when a pooled connection is reused after its exact-key entry expired (SNI scoping stops a tls.* request falling back onto a same-IP quic.*/apex connection)
 
 	logger *zap.Logger
 }
@@ -96,6 +98,41 @@ func (r *Reservoir) GetLastQUICVisitor(ip string) (string, bool) { // skipcq: GO
 	return "", false
 }
 
+// tlsVisitorKey scopes the visitor map by both client IP and the ClientHello's
+// SNI, so the tls.* probe can only ever fall back onto a connection that was
+// actually destined for tls.* — never a same-IP connection to quic.* or the apex
+// (the TCP listener captures every hostname into the same reservoir).
+func tlsVisitorKey(ip, sni string) string {
+	return ip + "\x00" + strings.ToLower(sni)
+}
+
+// NewTLSVisitor records the full RemoteAddr (IP:port) of the most recent TCP
+// connection whose ClientHello was captured for the given client IP + SNI. It
+// mirrors NewQUICVisitor and lets serveTLS fall back to an IP-scoped lookup when
+// the exact IP:port entry has already expired (e.g. a browser reused a pooled
+// connection past the TLS TTL, so the request carried no fresh ClientHello).
+func (r *Reservoir) NewTLSVisitor(ip, sni, fullKey string) { // skipcq: GO-W1029
+	key := tlsVisitorKey(ip, sni)
+	r.mapLastTLSVisitorPerIP.Store(key, fullKey)
+
+	// delete it after TTL if not updated
+	go func() {
+		<-time.After(time.Duration(r.TlsTTL))
+		r.mapLastTLSVisitorPerIP.CompareAndDelete(key, fullKey)
+	}()
+}
+
+// GetLastTLSVisitor returns the last TLS visitor for the given client IP whose
+// captured ClientHello carried the given SNI (the requested host).
+func (r *Reservoir) GetLastTLSVisitor(ip, sni string) (string, bool) { // skipcq: GO-W1029
+	if v, ok := r.mapLastTLSVisitorPerIP.Load(tlsVisitorKey(ip, sni)); ok {
+		if fullKey, ok := v.(string); ok {
+			return fullKey, true
+		}
+	}
+	return "", false
+}
+
 // Start implements Start() of caddy.App.
 func (r *Reservoir) Start() error { // skipcq: GO-W1029
 	if r.QuicTTL <= 0 || r.TlsTTL <= 0 {
@@ -119,6 +156,7 @@ func (r *Reservoir) Provision(ctx caddy.Context) error { // skipcq: GO-W1029
 	r.tlsFingerprinter = clienthellod.NewTLSFingerprinterWithTimeout(time.Duration(r.TlsTTL))
 	r.quicFingerprinter = clienthellod.NewQUICFingerprinterWithTimeout(time.Duration(r.QuicTTL))
 	r.mapLastQUICVisitorPerIP = new(sync.Map)
+	r.mapLastTLSVisitorPerIP = new(sync.Map)
 
 	r.logger = ctx.Logger(r)
 

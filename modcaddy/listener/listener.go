@@ -161,6 +161,20 @@ func (l *tlsListener) Accept() (net.Conn, error) {
 
 		_ = conn.SetReadDeadline(time.Time{})
 
+		// Record this IP's most-recent capture so serveTLS can fall back to an
+		// IP-scoped lookup if the exact IP:port entry later expires under a
+		// reused pooled connection. Scoped by the ClientHello's SNI so a tls.*
+		// request can never fall back onto a same-IP quic.*/apex connection.
+		// Best-effort: a malformed RemoteAddr or absent capture just skips it.
+		addr := conn.RemoteAddr().String()
+		if ip, _, splitErr := net.SplitHostPort(addr); splitErr == nil {
+			sni := ""
+			if captured := l.reservoir.TLSFingerprinter().Peek(addr); captured != nil {
+				sni = captured.ServerName
+			}
+			l.reservoir.NewTLSVisitor(ip, sni, addr)
+		}
+
 		return rewindConn, nil
 	}
 }

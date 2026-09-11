@@ -94,8 +94,26 @@ func (h *Handler) serveTLS(wr http.ResponseWriter, req *http.Request, next caddy
 	// get the client hello from the reservoir
 	ch := h.reservoir.TLSFingerprinter().Peek(req.RemoteAddr)
 	if ch == nil {
-		h.logger.Debug(fmt.Sprintf("Unable to fetch TLS ClientHello sent by %s, maybe not TLS connection?", req.RemoteAddr))
-		return next.ServeHTTP(wr, req)
+		// Exact IP:port missed. This happens when the browser reused a pooled
+		// connection whose ClientHello entry already expired, so this request
+		// carried no fresh handshake. Fall back to the most recent ClientHello
+		// captured from this client IP *for this same host* — the SNI scoping
+		// stops a tls.* request returning a same-IP quic.*/apex ClientHello. The
+		// tls.* origin is dedicated to fingerprinting, so the match is the same
+		// browser except in NAT-collision cases (as with the QUIC fallback).
+		if ip, _, splitErr := net.SplitHostPort(req.RemoteAddr); splitErr == nil {
+			host := req.Host
+			if hostOnly, _, err := net.SplitHostPort(host); err == nil {
+				host = hostOnly // strip any :port so it matches the SNI
+			}
+			if lastFrom, ok := h.reservoir.GetLastTLSVisitor(ip, host); ok {
+				ch = h.reservoir.TLSFingerprinter().Peek(lastFrom)
+			}
+		}
+		if ch == nil {
+			h.logger.Info(fmt.Sprintf("Unable to fetch TLS ClientHello for %s (no exact IP:port nor IP-fallback match)", req.RemoteAddr))
+			return next.ServeHTTP(wr, req)
+		}
 	}
 	// h.logger.Debug(fmt.Sprintf("Fetched TLS ClientHello for %s", req.RemoteAddr))
 
@@ -116,6 +134,9 @@ func (h *Handler) serveTLS(wr http.ResponseWriter, req *http.Request, next caddy
 
 	// Properly set the Content-Type header
 	wr.Header().Set("Content-Type", "application/json")
+	// Never cache a capture: each response must reflect this connection's live
+	// handshake, and a cached body would let the SPA skip a fresh capture.
+	wr.Header().Set("Cache-Control", "no-store")
 
 	// Close the HTTP connection after sending the response
 	//
@@ -171,6 +192,7 @@ func (h *Handler) serveTLSOverH3(wr http.ResponseWriter, req *http.Request, next
 		return next.ServeHTTP(wr, req)
 	}
 	wr.Header().Set("Content-Type", "application/json")
+	wr.Header().Set("Cache-Control", "no-store")
 	_, err = wr.Write(b)
 	if err != nil {
 		h.logger.Error("failed to write response", zap.Error(err))
@@ -216,7 +238,7 @@ func (h *Handler) serveQUIC(wr http.ResponseWriter, req *http.Request, next cadd
 		}
 	}
 	if qfp == nil {
-		h.logger.Debug(fmt.Sprintf("Unable to fetch QUIC fingerprint sent by %s", req.RemoteAddr))
+		h.logger.Info(fmt.Sprintf("Unable to fetch QUIC fingerprint sent by %s", req.RemoteAddr))
 		return next.ServeHTTP(wr, req)
 	}
 
@@ -252,6 +274,9 @@ func (h *Handler) serveQUIC(wr http.ResponseWriter, req *http.Request, next cadd
 
 	// Properly set the Content-Type header
 	wr.Header().Set("Content-Type", "application/json")
+	// Never cache a capture: each response must reflect this connection's live
+	// handshake, and a cached body would let the SPA skip a fresh capture.
+	wr.Header().Set("Cache-Control", "no-store")
 
 	// Close the HTTP connection after sending the response
 	//
